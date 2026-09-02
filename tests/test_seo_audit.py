@@ -50,6 +50,27 @@ class SeoAuditTests(unittest.TestCase):
         self.assertEqual(result["broken_internal_links"], [{"source": "/", "target": "/missing"}])
         self.assertEqual(result["orphan_public_routes"], ["/orphan"])
 
+    def test_reports_metadata_lengths_and_multiple_h1_headings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            page_dir = root / "src/app/about"
+            page_dir.mkdir(parents=True)
+            (page_dir / "page.tsx").write_text(
+                'export const metadata = { title: "Too short", description: "Too short" };'
+                '<h1>About</h1><h1>Another heading</h1>',
+                encoding="utf-8",
+            )
+
+            result = audit(root)
+
+        page = result["pages"][0]
+        self.assertEqual(page["title_length"], 9)
+        self.assertEqual(page["description_length"], 9)
+        self.assertEqual(page["h1_count"], 2)
+        self.assertIn("title too short: /about", result["warnings"])
+        self.assertIn("description too short: /about", result["warnings"])
+        self.assertIn("expected one H1, found 2: /about", result["warnings"])
+
 
 if __name__ == "__main__":
     unittest.main()

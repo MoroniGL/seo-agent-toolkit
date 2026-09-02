@@ -17,6 +17,9 @@ JSON_LD_RE = re.compile(r'application/ld\+json')
 IMAGE_RE = re.compile(r"<img\b", re.IGNORECASE)
 ALT_RE = re.compile(r"\balt\s*=", re.IGNORECASE)
 HREF_RE = re.compile(r"href\s*=\s*(?:\{\s*)?[\"']([^\"'#]+)", re.IGNORECASE)
+TITLE_VALUE_RE = re.compile(r"\btitle\s*:\s*[\"']([^\"']+)[\"']", re.IGNORECASE)
+DESCRIPTION_VALUE_RE = re.compile(r"\bdescription\s*:\s*[\"']([^\"']+)[\"']", re.IGNORECASE)
+H1_RE = re.compile(r"<h1\b", re.IGNORECASE)
 
 
 def route_for(path: Path, app_root: Path) -> str:
@@ -47,6 +50,15 @@ def source_with_layouts(path: Path, app_root: Path) -> str:
     return "\n".join(sources)
 
 
+def has_route_layout(path: Path, app_root: Path) -> bool:
+    current = path.parent
+    while current != app_root:
+        if any((current / f"layout{suffix}").is_file() for suffix in (".tsx", ".ts", ".jsx", ".js")):
+            return True
+        current = current.parent
+    return False
+
+
 def internal_targets(text: str) -> set[str]:
     targets = set()
     for href in HREF_RE.findall(text):
@@ -65,6 +77,11 @@ def source_files(root: Path) -> list[Path]:
     ]
 
 
+def literal_length(pattern: re.Pattern[str], text: str) -> int | None:
+    match = pattern.search(text)
+    return len(match.group(1).strip()) if match else None
+
+
 def audit(root: Path) -> dict[str, object]:
     app_root = root / "src" / "app"
     if not app_root.is_dir():
@@ -76,6 +93,7 @@ def audit(root: Path) -> dict[str, object]:
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         effective_text = f"{source_with_layouts(path, app_root)}\n{text}"
+        quality_text = effective_text if route_for(path, app_root) == "/" or has_route_layout(path, app_root) else text
         route = route_for(path, app_root)
         private = is_private(route)
         image_count = len(IMAGE_RE.findall(text))
@@ -90,6 +108,9 @@ def audit(root: Path) -> dict[str, object]:
             "has_json_ld": bool(JSON_LD_RE.search(effective_text)),
             "images": image_count,
             "images_with_alt": min(image_count, alt_count),
+            "title_length": literal_length(TITLE_VALUE_RE, quality_text),
+            "description_length": literal_length(DESCRIPTION_VALUE_RE, quality_text),
+            "h1_count": len(H1_RE.findall(text)),
         })
 
     public = [page for page in pages if not page["private"]]
@@ -117,6 +138,14 @@ def audit(root: Path) -> dict[str, object]:
             warnings.append(f"missing canonical: {page['route']}")
         if page["images"] != page["images_with_alt"]:
             warnings.append(f"image alt text needs review: {page['route']}")
+        if page["title_length"] is not None and not 30 <= page["title_length"] <= 60:
+            label = "too short" if page["title_length"] < 30 else "too long"
+            warnings.append(f"title {label}: {page['route']}")
+        if page["description_length"] is not None and not 70 <= page["description_length"] <= 160:
+            label = "too short" if page["description_length"] < 70 else "too long"
+            warnings.append(f"description {label}: {page['route']}")
+        if page["h1_count"] > 1:
+            warnings.append(f"expected one H1, found {page['h1_count']}: {page['route']}")
     for page in pages:
         if page["private"] and not page["noindex"]:
             warnings.append(f"private route may be indexable: {page['route']}")
