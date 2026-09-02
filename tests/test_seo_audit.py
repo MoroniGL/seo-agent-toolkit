@@ -32,6 +32,63 @@ class SeoAuditTests(unittest.TestCase):
 
         self.assertNotIn("private route may be indexable: /painel", result["warnings"])
 
+    def test_reports_broken_internal_links_and_orphan_public_routes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "src/app").mkdir(parents=True)
+            (root / "src/app/about").mkdir()
+            (root / "src/app/orphan").mkdir()
+            (root / "src/app/page.tsx").write_text(
+                '<a href="/about">About</a><a href="/missing">Missing</a><a href="https://example.com">External</a>',
+                encoding="utf-8",
+            )
+            (root / "src/app/about/page.tsx").write_text("export const metadata = {};", encoding="utf-8")
+            (root / "src/app/orphan/page.tsx").write_text("export const metadata = {};", encoding="utf-8")
+
+            result = audit(root)
+
+        self.assertEqual(result["broken_internal_links"], [{"source": "/", "target": "/missing"}])
+        self.assertEqual(result["orphan_public_routes"], ["/orphan"])
+
+    def test_reports_metadata_lengths_and_multiple_h1_headings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            page_dir = root / "src/app/about"
+            page_dir.mkdir(parents=True)
+            (page_dir / "page.tsx").write_text(
+                'export const metadata = { title: "Too short", description: "Too short" };'
+                '<h1>About</h1><h1>Another heading</h1>',
+                encoding="utf-8",
+            )
+
+            result = audit(root)
+
+        page = result["pages"][0]
+        self.assertEqual(page["title_length"], 9)
+        self.assertEqual(page["description_length"], 9)
+        self.assertEqual(page["h1_count"], 2)
+        self.assertIn("title too short: /about", result["warnings"])
+        self.assertIn("description too short: /about", result["warnings"])
+        self.assertIn("expected one H1, found 2: /about", result["warnings"])
+
+    def test_validates_literal_json_ld_and_collects_schema_types(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            page_dir = root / "src/app/about"
+            page_dir.mkdir(parents=True)
+            (page_dir / "page.tsx").write_text(
+                '<script type="application/ld+json">{"@context":"https://schema.org","@type":"Service"}</script>'
+                '<script type="application/ld+json">{"name":"missing type"}</script>',
+                encoding="utf-8",
+            )
+
+            result = audit(root)
+
+        page = result["pages"][0]
+        self.assertEqual(page["schema_types"], ["Service"])
+        self.assertEqual(page["json_ld_issues"], ["missing @context", "missing @type"])
+        self.assertIn("invalid JSON-LD: /about", result["warnings"])
+
 
 if __name__ == "__main__":
     unittest.main()
