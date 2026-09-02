@@ -20,6 +20,8 @@ HREF_RE = re.compile(r"href\s*=\s*(?:\{\s*)?[\"']([^\"'#]+)", re.IGNORECASE)
 TITLE_VALUE_RE = re.compile(r"\btitle\s*:\s*[\"']([^\"']+)[\"']", re.IGNORECASE)
 DESCRIPTION_VALUE_RE = re.compile(r"\bdescription\s*:\s*[\"']([^\"']+)[\"']", re.IGNORECASE)
 H1_RE = re.compile(r"<h1\b", re.IGNORECASE)
+JSON_LD_BLOCK_RE = re.compile(r"<script[^>]*application/ld\+json[^>]*>(.*?)</script>", re.IGNORECASE | re.DOTALL)
+SCHEMA_TYPE_RE = re.compile(r"[\"']@type[\"']\s*:\s*[\"']([^\"']+)[\"']")
 
 
 def route_for(path: Path, app_root: Path) -> str:
@@ -82,6 +84,31 @@ def literal_length(pattern: re.Pattern[str], text: str) -> int | None:
     return len(match.group(1).strip()) if match else None
 
 
+def inspect_json_ld(text: str) -> tuple[list[str], list[str]]:
+    schema_types: list[str] = []
+    issues: list[str] = []
+    for block in JSON_LD_BLOCK_RE.findall(text):
+        schema_types.extend(item for item in SCHEMA_TYPE_RE.findall(block) if item not in schema_types)
+        candidate = block.strip()
+        if not candidate.startswith(("{", "[")):
+            continue
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            issues.append("invalid JSON")
+            continue
+        objects = parsed if isinstance(parsed, list) else [parsed]
+        for item in objects:
+            if not isinstance(item, dict):
+                issues.append("JSON-LD root is not an object")
+                continue
+            if "@context" not in item:
+                issues.append("missing @context")
+            if "@type" not in item:
+                issues.append("missing @type")
+    return schema_types, issues
+
+
 def audit(root: Path) -> dict[str, object]:
     app_root = root / "src" / "app"
     if not app_root.is_dir():
@@ -96,6 +123,7 @@ def audit(root: Path) -> dict[str, object]:
         quality_text = effective_text if route_for(path, app_root) == "/" or has_route_layout(path, app_root) else text
         route = route_for(path, app_root)
         private = is_private(route)
+        schema_types, json_ld_issues = inspect_json_ld(effective_text)
         image_count = len(IMAGE_RE.findall(text))
         alt_count = len(ALT_RE.findall(text))
         pages.append({
@@ -106,6 +134,8 @@ def audit(root: Path) -> dict[str, object]:
             "has_canonical": bool(CANONICAL_RE.search(effective_text)),
             "noindex": bool(NOINDEX_RE.search(effective_text)),
             "has_json_ld": bool(JSON_LD_RE.search(effective_text)),
+            "schema_types": schema_types,
+            "json_ld_issues": json_ld_issues,
             "images": image_count,
             "images_with_alt": min(image_count, alt_count),
             "title_length": literal_length(TITLE_VALUE_RE, quality_text),
@@ -146,6 +176,8 @@ def audit(root: Path) -> dict[str, object]:
             warnings.append(f"description {label}: {page['route']}")
         if page["h1_count"] > 1:
             warnings.append(f"expected one H1, found {page['h1_count']}: {page['route']}")
+        if page["json_ld_issues"]:
+            warnings.append(f"invalid JSON-LD: {page['route']}")
     for page in pages:
         if page["private"] and not page["noindex"]:
             warnings.append(f"private route may be indexable: {page['route']}")

@@ -71,6 +71,24 @@ class SeoAuditTests(unittest.TestCase):
         self.assertIn("description too short: /about", result["warnings"])
         self.assertIn("expected one H1, found 2: /about", result["warnings"])
 
+    def test_validates_literal_json_ld_and_collects_schema_types(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            page_dir = root / "src/app/about"
+            page_dir.mkdir(parents=True)
+            (page_dir / "page.tsx").write_text(
+                '<script type="application/ld+json">{"@context":"https://schema.org","@type":"Service"}</script>'
+                '<script type="application/ld+json">{"name":"missing type"}</script>',
+                encoding="utf-8",
+            )
+
+            result = audit(root)
+
+        page = result["pages"][0]
+        self.assertEqual(page["schema_types"], ["Service"])
+        self.assertEqual(page["json_ld_issues"], ["missing @context", "missing @type"])
+        self.assertIn("invalid JSON-LD: /about", result["warnings"])
+
 
 if __name__ == "__main__":
     unittest.main()

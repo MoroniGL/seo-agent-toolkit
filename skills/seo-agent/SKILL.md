@@ -42,6 +42,8 @@ The link detector should be treated as conservative: static links can be verifie
 
 When literal metadata is available, review title length (roughly 30–60 characters), description length (roughly 70–160 characters), and multiple H1 headings. Treat these as review signals, not absolute ranking rules, and never rewrite copy without the owner's approval.
 
+For JSON-LD, validate literal script blocks only. Collect their `@type` values and flag missing `@context`, missing `@type`, or invalid JSON. Skip dynamic React/JavaScript expressions rather than guessing their runtime output.
+
 ## Framework guidance
 
 For Next.js App Router, prefer `Metadata` exports, `metadataBase`, `app/robots.ts`, `app/sitemap.ts`, and server-rendered JSON-LD. Keep a single site-origin helper. Use nested layouts for metadata on client pages rather than exporting metadata from a client component.
