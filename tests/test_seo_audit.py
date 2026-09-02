@@ -32,6 +32,24 @@ class SeoAuditTests(unittest.TestCase):
 
         self.assertNotIn("private route may be indexable: /painel", result["warnings"])
 
+    def test_reports_broken_internal_links_and_orphan_public_routes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "src/app").mkdir(parents=True)
+            (root / "src/app/about").mkdir()
+            (root / "src/app/orphan").mkdir()
+            (root / "src/app/page.tsx").write_text(
+                '<a href="/about">About</a><a href="/missing">Missing</a><a href="https://example.com">External</a>',
+                encoding="utf-8",
+            )
+            (root / "src/app/about/page.tsx").write_text("export const metadata = {};", encoding="utf-8")
+            (root / "src/app/orphan/page.tsx").write_text("export const metadata = {};", encoding="utf-8")
+
+            result = audit(root)
+
+        self.assertEqual(result["broken_internal_links"], [{"source": "/", "target": "/missing"}])
+        self.assertEqual(result["orphan_public_routes"], ["/orphan"])
+
 
 if __name__ == "__main__":
     unittest.main()

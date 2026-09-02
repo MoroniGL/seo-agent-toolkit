@@ -38,6 +38,8 @@ Review the script output and then inspect the relevant source:
 7. Duplicate metadata, missing metadata, broken internal links and orphan public routes.
 8. Redirect/404 behavior and page indexing intent.
 
+The link detector should be treated as conservative: static links can be verified directly, while dynamic navigation must be reported as limited rather than guessed.
+
 ## Framework guidance
 
 For Next.js App Router, prefer `Metadata` exports, `metadataBase`, `app/robots.ts`, `app/sitemap.ts`, and server-rendered JSON-LD. Keep a single site-origin helper. Use nested layouts for metadata on client pages rather than exporting metadata from a client component.

@@ -16,6 +16,7 @@ CANONICAL_RE = re.compile(r"canonical|alternates", re.IGNORECASE)
 JSON_LD_RE = re.compile(r'application/ld\+json')
 IMAGE_RE = re.compile(r"<img\b", re.IGNORECASE)
 ALT_RE = re.compile(r"\balt\s*=", re.IGNORECASE)
+HREF_RE = re.compile(r"href\s*=\s*(?:\{\s*)?[\"']([^\"'#]+)", re.IGNORECASE)
 
 
 def route_for(path: Path, app_root: Path) -> str:
@@ -46,6 +47,24 @@ def source_with_layouts(path: Path, app_root: Path) -> str:
     return "\n".join(sources)
 
 
+def internal_targets(text: str) -> set[str]:
+    targets = set()
+    for href in HREF_RE.findall(text):
+        if not href.startswith("/") or href.startswith("//"):
+            continue
+        target = href.split("?", 1)[0].rstrip("/") or "/"
+        if not is_private(target):
+            targets.add(target)
+    return targets
+
+
+def source_files(root: Path) -> list[Path]:
+    return [
+        path for path in (root / "src").rglob("*")
+        if path.is_file() and path.suffix in {".ts", ".tsx", ".js", ".jsx"}
+    ]
+
+
 def audit(root: Path) -> dict[str, object]:
     app_root = root / "src" / "app"
     if not app_root.is_dir():
@@ -74,6 +93,22 @@ def audit(root: Path) -> dict[str, object]:
         })
 
     public = [page for page in pages if not page["private"]]
+    public_routes = {page["route"].rstrip("/") or "/" for page in public}
+    broken_internal_links: list[dict[str, str]] = []
+    linked_public_routes: set[str] = {"/"}
+    public_page_files = {root / str(page["file"]): str(page["route"]) for page in public}
+    has_dynamic_links = False
+    for path in source_files(root):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        has_dynamic_links = has_dynamic_links or bool(re.search(r"href\s*=\s*\{", text, re.IGNORECASE))
+        source = public_page_files.get(path, path.relative_to(root).as_posix())
+        for target in internal_targets(text):
+            if target in public_routes:
+                linked_public_routes.add(target)
+            else:
+                broken_internal_links.append({"source": source, "target": target})
+    # Dynamic navigation maps cannot be resolved safely with regex alone.
+    orphan_public_routes = [] if has_dynamic_links else sorted(public_routes - linked_public_routes)
     warnings: list[str] = []
     for page in public:
         if not page["has_metadata"] and page["route"] != "/":
@@ -85,11 +120,16 @@ def audit(root: Path) -> dict[str, object]:
     for page in pages:
         if page["private"] and not page["noindex"]:
             warnings.append(f"private route may be indexable: {page['route']}")
+    warnings.extend(f"broken internal link: {item['source']} -> {item['target']}" for item in broken_internal_links)
+    warnings.extend(f"orphan public route: {route}" for route in orphan_public_routes)
 
     return {
         "framework": "next-app-router",
         "root": str(root),
         "pages": pages,
+        "broken_internal_links": broken_internal_links,
+        "orphan_public_routes": orphan_public_routes,
+        "link_analysis_limited": has_dynamic_links,
         "summary": {"total_pages": len(pages), "public_pages": len(public), "warnings": len(warnings)},
         "warnings": warnings,
     }
